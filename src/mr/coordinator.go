@@ -1,18 +1,57 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
+import (
+	// "fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+)
 
+type TaskStatus int
+type TaskType	int
+
+const (
+	IDLE = 0
+	IN_PROCESS = 1
+	DONE = 2
+)
+
+const (
+	NOTASKYET = 0	// represent no task is doable, maybe because map tasks not finished
+	MAP = 1
+	REDUCE = 2
+)
 
 type Coordinator struct {
 	// Your definitions here.
+	files []string	// store input files
+	nReduce int
+	taskType []TaskType
+}
 
+type MapTaskMeta struct {
+	taskStatus []TaskStatus
+}
+
+type ReduceTaskMeta struct {
+	
 }
 
 // Your code here -- RPC handlers for the worker to call.
+// ask for task to do
+func (c *Coordinator) AssignTask(args *Args, reply *Reply) error {
+	reply.Task = c.files[0]
+	reply.Taskid = 0
+	reply.NReduce = c.nReduce
+	return nil
+}
+
+// tell the cordinator that have finished the task
+func (c *Coordinator) DoneTask(args *Args, reply *Reply) error {
+	return nil
+}
 
 //
 // an example RPC handler.
@@ -50,7 +89,6 @@ func (c *Coordinator) Done() bool {
 
 	// Your code here.
 
-
 	return ret
 }
 
@@ -60,10 +98,11 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	c := Coordinator{files, make([]int, len(files)), nReduce}
 
 	// Your code here.
-
+	// c.files = make([]string, len(files))
+	// copy(c.files, files)		// first store input files
 
 	c.server()
 	return &c

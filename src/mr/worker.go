@@ -1,10 +1,15 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-
+import (
+	"fmt"
+	"hash/fnv"
+	"log"
+	"net/rpc"
+	"os"
+	"io/ioutil"
+	"strconv"
+	// "sort"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -30,12 +35,70 @@ func ihash(key string) int {
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+	for {
+		
+	}
+	
+	task, taskid, nReduce := CallForTask()
 
-	// Your worker implementation here.
+	DoMapTask(task, taskid, nReduce, mapf)
+}
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+// for sorting by key.
+type ByKey []KeyValue
 
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
+// task - file name
+func DoMapTask(task string, taskid int, nReduce int, mapf func(string, string) []KeyValue) {
+	intermediate := []KeyValue{}
+
+	file, err := os.Open(task)
+	if err != nil {
+		log.Fatalf("cannot open %v", task)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", task)
+	}
+	file.Close()
+
+	intermediate = mapf(task, string(content))
+
+	// store intermediate to intermediate files
+	// format mr-X-Y, X is Map task id, Y is the reduce task id
+	
+	// first sort the intermediate
+	// sort.Sort(ByKey(intermediate))
+
+	oname_prefix := "mr-" + strconv.Itoa(taskid)
+	ofile := make([]*os.File, nReduce)
+
+	for i := 0; i < nReduce; i++ {
+		oname := oname_prefix + "-" + strconv.Itoa(i)
+		ofile[i], _ = os.Create(oname)
+	}
+
+	for i := 0; i < len(intermediate); i++ {
+		fileID := ihash(intermediate[i].Key) % nReduce
+		fmt.Fprintf(ofile[fileID], "%v %v\n", intermediate[i].Key, intermediate[i].Value)
+	}
+}
+
+func CallForTask() (string, int, int){
+	args := Args{}
+	reply := Reply{}
+
+	ok := call("Coordinator.AssignTask", &args, &reply)
+	if ok {
+		return reply.Task, reply.Taskid, reply.NReduce
+	} else {
+		fmt.Printf("call failed!\n")
+		return "", 0, 0
+	} 
 }
 
 //
