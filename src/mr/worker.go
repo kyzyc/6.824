@@ -8,7 +8,9 @@ import (
 	"os"
 	"io/ioutil"
 	"strconv"
-	// "sort"
+	"time"
+	"encoding/json"
+	"sort"
 )
 
 //
@@ -35,13 +37,26 @@ func ihash(key string) int {
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+	reply := Reply{}
 	for {
-		
+		ok := CallForTask(&reply)
+		if (!ok) {
+			break
+		}
+		switch reply.TaskType {
+		case MAP:
+			DoMapTask(reply.Task, reply.Taskid, reply.NReduce, mapf)
+			break
+		case REDUCE:
+			DoReduceTask(reply.Taskid, reply.ReduceTaskLocation, reducef)
+			break
+		case IDLE:
+			time.Sleep(time.Second)
+			break
+		default:
+			panic("unknown task type!")
+		}
 	}
-	
-	task, taskid, nReduce := CallForTask()
-
-	DoMapTask(task, taskid, nReduce, mapf)
 }
 
 // for sorting by key.
@@ -70,10 +85,6 @@ func DoMapTask(task string, taskid int, nReduce int, mapf func(string, string) [
 
 	// store intermediate to intermediate files
 	// format mr-X-Y, X is Map task id, Y is the reduce task id
-	
-	// first sort the intermediate
-	// sort.Sort(ByKey(intermediate))
-
 	oname_prefix := "mr-" + strconv.Itoa(taskid)
 	ofile := make([]*os.File, nReduce)
 
@@ -82,23 +93,76 @@ func DoMapTask(task string, taskid int, nReduce int, mapf func(string, string) [
 		ofile[i], _ = os.Create(oname)
 	}
 
-	for i := 0; i < len(intermediate); i++ {
-		fileID := ihash(intermediate[i].Key) % nReduce
-		fmt.Fprintf(ofile[fileID], "%v %v\n", intermediate[i].Key, intermediate[i].Value)
+	enc := make([]*json.Encoder, nReduce)
+	for i := 0; i < nReduce; i++ {
+		enc[i] = json.NewEncoder(ofile[i])
+	}
+
+	for _, kv := range intermediate {
+		fileID := ihash(kv.Key) % nReduce
+		err := enc[fileID].Encode(&kv)
+		if err != nil {
+			panic("Error while write to intermidate file!")
+		}
 	}
 }
 
-func CallForTask() (string, int, int){
-	args := Args{}
-	reply := Reply{}
+func DoReduceTask(taskid int, intermidateLocation []string, reducef func(string, []string) string) {
+	intermediate := []KeyValue{}
+	for _, filename := range intermidateLocation {
+		file, err := os.Open(filename)
+		dec := json.NewDecoder(file)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		kva := []KeyValue{}
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+			  break
+			}
+			kva = append(kva, kv)
+		}
+		file.Close()
 
-	ok := call("Coordinator.AssignTask", &args, &reply)
-	if ok {
-		return reply.Task, reply.Taskid, reply.NReduce
-	} else {
-		fmt.Printf("call failed!\n")
-		return "", 0, 0
-	} 
+		intermediate = append(intermediate, kva...)
+	}
+
+	sort.Sort(ByKey(intermediate))
+
+
+	oname := "mr-out-" + strconv.Itoa(taskid)
+	ofile, _ := os.Create(oname)
+
+	//
+	// call Reduce on each distinct key in intermediate[],
+	// and print the result to mr-out-0.
+	//
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	ofile.Close()
+}
+
+func CallForTask(reply *Reply) bool {
+	args := Args{}
+
+	return call("Coordinator.AssignTask", &args, &reply)
 }
 
 //

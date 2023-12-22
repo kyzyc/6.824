@@ -28,28 +28,51 @@ type Coordinator struct {
 	// Your definitions here.
 	files []string	// store input files
 	nReduce int
-	taskType []TaskType
+	mapDone bool	// denote whether map tasks all have done
+	reduceDone bool // denote whether reduce tasks all have done
+
+	mapTaskMeta MapTaskMeta
+	reduceTaskMeta ReduceTaskMeta
 }
 
 type MapTaskMeta struct {
-	taskStatus []TaskStatus
+	taskStatus []TaskStatus		// task status for map
 }
 
 type ReduceTaskMeta struct {
-	
+	taskStatus []TaskStatus		// task status for reduce
+	intermidateLocation [][]string
 }
 
 // Your code here -- RPC handlers for the worker to call.
 // ask for task to do
 func (c *Coordinator) AssignTask(args *Args, reply *Reply) error {
-	reply.Task = c.files[0]
-	reply.Taskid = 0
-	reply.NReduce = c.nReduce
+	if !c.mapDone {
+		// should assign map task
+		reply.TaskType = MAP
+		reply.Task = c.files[0]
+		reply.Taskid = 0
+		reply.NReduce = c.nReduce
+		c.mapDone = true
+	} else {
+		// should assign reduce task
+		reply.TaskType = REDUCE
+		reply.ReduceID = 0
+		reply.ReduceTaskLocation = []string {
+			"mr-0-0",
+		}
+		c.reduceDone = true
+	}
 	return nil
 }
 
 // tell the cordinator that have finished the task
-func (c *Coordinator) DoneTask(args *Args, reply *Reply) error {
+func (c *Coordinator) DoneMapTask(args *Args, reply *Reply) error {
+	return nil
+}
+
+// tell the cordinator that have finished the task
+func (c *Coordinator) DoneReduceTask(args *Args, reply *Reply) error {
 	return nil
 }
 
@@ -88,6 +111,9 @@ func (c *Coordinator) Done() bool {
 	ret := false
 
 	// Your code here.
+	if (c.mapDone && c.reduceDone) {
+		ret = true
+	}
 
 	return ret
 }
@@ -98,7 +124,7 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{files, make([]int, len(files)), nReduce}
+	c := Coordinator{files, nReduce, false, false, MapTaskMeta{}, ReduceTaskMeta{}}
 
 	// Your code here.
 	// c.files = make([]string, len(files))

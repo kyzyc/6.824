@@ -30,9 +30,15 @@ type Args struct {
 }
 
 type Reply struct {
-	Task string			// task file name
-	Taskid  int			// id of task, for distinguish worker
-	NReduce int			// number of reduce
+	// Task Type
+	TaskType int
+	// Meta information for map task
+	Task string						// task file name
+	Taskid  int						// id of task, for distinguish worker
+	NReduce int						// number of reduce
+	// Meta information for reduce task
+	ReduceID int					// id of reduce task
+	ReduceTaskLocation []string 	// location of intermidate files
 }
 
 // Cook up a unique-ish UNIX-domain socket name
