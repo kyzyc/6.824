@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
+	"time"
 )
 
 type TaskStatus int
@@ -33,87 +35,137 @@ type Coordinator struct {
 
 	mapTaskMeta MapTaskMeta
 	reduceTaskMeta ReduceTaskMeta
+
+	// Lock field
+	mapTaskMetaLock sync.Mutex
+	reduceTaskMetaLock sync.Mutex
+	mapDoneLock sync.Mutex
+	reduceDoneLock sync.Mutex
 }
 
 type MapTaskMeta struct {
 	taskStatus []TaskStatus		// task status for map
+	taskBeginTime []time.Time
 }
 
 type ReduceTaskMeta struct {
 	taskStatus []TaskStatus		// task status for reduce
+	taskBeginTime []time.Time
 	intermidateLocation [][]string
 }
 
-func (c *Coordinator) FindMapTaskToDo() int {
+func (c *Coordinator) FindMapTaskToDo() (int, bool) {
+	allDone := true
 	taskNum := len(c.files)
+	c.mapTaskMetaLock.Lock()
 	for i := 0; i < taskNum; i++ {
 		if c.mapTaskMeta.taskStatus[i] == IDLE {
-			return i
-		} 
+			c.mapTaskMetaLock.Unlock()
+			return i, false
+		} else if c.mapTaskMeta.taskStatus[i] == IN_PROCESS {
+			allDone = false
+			timeGone := time.Now().Sub(c.mapTaskMeta.taskBeginTime[i])
+			if timeGone > (10 * time.Second) {
+				c.mapTaskMetaLock.Unlock()
+				return i, false
+			}
+		}
 	}
-	return -1
+	
+	c.mapTaskMetaLock.Unlock()
+	return -1, allDone
 }
 
-func (c *Coordinator) FindReduceTaskToDo() int {
+func (c *Coordinator) FindReduceTaskToDo() (int, bool) {
+	allDone := true
 	taskNum := c.nReduce
+	c.reduceTaskMetaLock.Lock()
 	for i := 0; i < taskNum; i++ {
 		if c.reduceTaskMeta.taskStatus[i] == IDLE {
-			return i
-		} 
+			c.reduceTaskMetaLock.Unlock()
+			return i, false
+		} else if c.reduceTaskMeta.taskStatus[i] == IN_PROCESS {
+			allDone = false
+			timeGone := time.Now().Sub(c.reduceTaskMeta.taskBeginTime[i])
+			if timeGone > (10 * time.Second) {
+				c.reduceTaskMetaLock.Unlock()
+				return i, false
+			}
+		}
 	}
-	return -1
+	c.reduceTaskMetaLock.Unlock()
+	return -1, allDone
 }
 
 // Your code here -- RPC handlers for the worker to call.
 // ask for task to do
 func (c *Coordinator) AssignTask(args *Args, reply *Reply) error {
+	c.mapDoneLock.Lock()
 	if !c.mapDone {
-		taskIndex := c.FindMapTaskToDo()
+		taskIndex, allDone := c.FindMapTaskToDo()
 		if taskIndex == -1 {
 			// map task all have done
 			reply.TaskType = NOTASKYET
-			c.mapDone = true
+			if allDone == true {
+				c.mapDone = true	
+			}
 		} else {
+			c.mapTaskMetaLock.Lock()
 			reply.TaskType = MAP
 			reply.Taskid = taskIndex
 			reply.NReduce = c.nReduce
 			reply.Task = c.files[taskIndex]
 			c.mapTaskMeta.taskStatus[taskIndex] = IN_PROCESS
+			c.mapTaskMeta.taskBeginTime[taskIndex] = time.Now()
+			c.mapTaskMetaLock.Unlock()
 		}
 	} else {
-		taskIndex := c.FindReduceTaskToDo()
+		taskIndex, allDone := c.FindReduceTaskToDo()
 		if taskIndex == -1 {
 			// map task all have done
 			reply.TaskType = NOTASKYET
-			c.reduceDone = true
+			if allDone == true {
+				c.reduceDoneLock.Lock()
+				c.reduceDone = true
+				c.reduceDoneLock.Unlock()
+			}
 		} else {
+			c.reduceTaskMetaLock.Lock()
 			reply.TaskType = REDUCE
 			reply.Taskid = taskIndex
 			reply.ReduceTaskLocation = c.reduceTaskMeta.intermidateLocation[taskIndex]
 			c.reduceTaskMeta.taskStatus[taskIndex] = IN_PROCESS
+			c.reduceTaskMeta.taskBeginTime[taskIndex] = time.Now()
+			c.reduceTaskMetaLock.Unlock()
 		}
 	}
+	c.mapDoneLock.Unlock()
 	return nil
 }
 
 // tell the cordinator that have finished the task
 func (c *Coordinator) DoneMapTask(args *MapArgs, reply *Reply) error {
-	c.mapTaskMeta.taskStatus[args.Taskid] = DONE
 	intermidate := args.Intermidate
 
+	c.reduceTaskMetaLock.Lock()
 	for i := 0; i < c.nReduce; i++ {
 		c.reduceTaskMeta.intermidateLocation[i] = 
 			append(c.reduceTaskMeta.intermidateLocation[i], intermidate[i])
 	}
+	c.reduceTaskMetaLock.Unlock()
 
-	// fmt.Println(c.reduceTaskMeta.intermidateLocation)
+	c.mapTaskMetaLock.Lock()
+	c.mapTaskMeta.taskStatus[args.Taskid] = DONE
+	c.mapTaskMetaLock.Unlock()
 
 	return nil
 }
 
 // tell the cordinator that have finished the task
 func (c *Coordinator) DoneReduceTask(args *ReduceArgs, reply *Reply) error {
+	c.reduceTaskMetaLock.Lock()
 	c.reduceTaskMeta.taskStatus[args.Taskid] = DONE
+	c.reduceTaskMetaLock.Unlock()
 	return nil
 }
 
@@ -141,9 +193,13 @@ func (c *Coordinator) Done() bool {
 	ret := false
 
 	// Your code here.
+	c.mapDoneLock.Lock()
+	c.reduceDoneLock.Lock()
 	if (c.mapDone && c.reduceDone) {
 		ret = true
 	}
+	c.reduceDoneLock.Unlock()
+	c.mapDoneLock.Unlock()
 
 	return ret
 }
@@ -154,12 +210,15 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{files, nReduce, false, false, MapTaskMeta{}, ReduceTaskMeta{}}
+	c := Coordinator{files, nReduce, false, false, MapTaskMeta{}, ReduceTaskMeta{},
+                     sync.Mutex{}, sync.Mutex{}, sync.Mutex{}, sync.Mutex{}}
 
 	// Your code here.
 	taskNum := len(files)
 	c.mapTaskMeta.taskStatus = make([]TaskStatus, taskNum)
+	c.mapTaskMeta.taskBeginTime = make([]time.Time, taskNum)
 	c.reduceTaskMeta.taskStatus = make([]TaskStatus, nReduce)
+	c.reduceTaskMeta.taskBeginTime = make([]time.Time, nReduce)
 	c.reduceTaskMeta.intermidateLocation = make([][]string, nReduce)
 
 	c.server()
