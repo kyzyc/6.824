@@ -44,30 +44,57 @@ type ReduceTaskMeta struct {
 	intermidateLocation [][]string
 }
 
+func (c *Coordinator) FindMapTaskToDo() int {
+	taskNum := len(c.files)
+	for i := 0; i < taskNum; i++ {
+		if c.mapTaskMeta.taskStatus[i] == IDLE {
+			return i
+		} 
+	}
+	return -1
+}
+
+// func (c *Coordinator) FindReduceTaskToDo() int {
+// 	taskNum := len(c.files)
+// 	for i := 0; i < taskNum; i++ {
+// 		if c.mapTaskMeta.taskStatus[i] == IDLE {
+// 			return i
+// 		} 
+// 	}
+// 	return -1
+// }
+
 // Your code here -- RPC handlers for the worker to call.
 // ask for task to do
 func (c *Coordinator) AssignTask(args *Args, reply *Reply) error {
 	if !c.mapDone {
-		// should assign map task
-		reply.TaskType = MAP
-		reply.Task = c.files[0]
-		reply.Taskid = 0
-		reply.NReduce = c.nReduce
-		c.mapDone = true
+		taskIndex := c.FindMapTaskToDo()
+		if taskIndex == -1 {
+			// map task all have done
+			reply.TaskType = NOTASKYET
+			c.mapDone = true
+		} else {
+			reply.TaskType = MAP
+			reply.Taskid = taskIndex
+			reply.NReduce = c.nReduce
+			reply.Task = c.files[taskIndex]
+			c.mapTaskMeta.taskStatus[taskIndex] = IN_PROCESS
+		}
 	} else {
 		// should assign reduce task
-		reply.TaskType = REDUCE
-		reply.ReduceID = 0
-		reply.ReduceTaskLocation = []string {
-			"mr-0-0",
-		}
-		c.reduceDone = true
+		// reply.TaskType = REDUCE
+		// reply.Taskid = 0
+		// reply.ReduceTaskLocation = []string {
+		// 	"mr-0-0",
+		// }
+		// c.reduceDone = true
 	}
 	return nil
 }
 
 // tell the cordinator that have finished the task
 func (c *Coordinator) DoneMapTask(args *Args, reply *Reply) error {
+	c.mapTaskMeta.taskStatus[args.Taskid] = DONE
 	return nil
 }
 
@@ -75,17 +102,6 @@ func (c *Coordinator) DoneMapTask(args *Args, reply *Reply) error {
 func (c *Coordinator) DoneReduceTask(args *Args, reply *Reply) error {
 	return nil
 }
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -127,8 +143,10 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{files, nReduce, false, false, MapTaskMeta{}, ReduceTaskMeta{}}
 
 	// Your code here.
-	// c.files = make([]string, len(files))
-	// copy(c.files, files)		// first store input files
+	taskNum := len(files)
+	c.mapTaskMeta.taskStatus = make([]TaskStatus, taskNum)
+	c.reduceTaskMeta.taskStatus = make([]TaskStatus, nReduce)
+	c.reduceTaskMeta.intermidateLocation = make([][]string, nReduce)
 
 	c.server()
 	return &c

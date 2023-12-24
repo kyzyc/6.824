@@ -13,6 +13,14 @@ import (
 	"sort"
 )
 
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
 //
 // Map functions return a slice of KeyValue.
 //
@@ -45,12 +53,13 @@ func Worker(mapf func(string, string) []KeyValue,
 		}
 		switch reply.TaskType {
 		case MAP:
-			DoMapTask(reply.Task, reply.Taskid, reply.NReduce, mapf)
+			oname := DoMapTask(reply.Task, reply.Taskid, reply.NReduce, mapf)
+			DoneMapTask(reply.Taskid, oname)
 			break
 		case REDUCE:
 			DoReduceTask(reply.Taskid, reply.ReduceTaskLocation, reducef)
 			break
-		case IDLE:
+		case NOTASKYET:
 			time.Sleep(time.Second)
 			break
 		default:
@@ -59,16 +68,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	}
 }
 
-// for sorting by key.
-type ByKey []KeyValue
-
-// for sorting by key.
-func (a ByKey) Len() int           { return len(a) }
-func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
-
 // task - file name
-func DoMapTask(task string, taskid int, nReduce int, mapf func(string, string) []KeyValue) {
+func DoMapTask(task string, taskid int, nReduce int, mapf func(string, string) []KeyValue) []string{
 	intermediate := []KeyValue{}
 
 	file, err := os.Open(task)
@@ -87,10 +88,11 @@ func DoMapTask(task string, taskid int, nReduce int, mapf func(string, string) [
 	// format mr-X-Y, X is Map task id, Y is the reduce task id
 	oname_prefix := "mr-" + strconv.Itoa(taskid)
 	ofile := make([]*os.File, nReduce)
+	oname := make([]string, nReduce)
 
 	for i := 0; i < nReduce; i++ {
-		oname := oname_prefix + "-" + strconv.Itoa(i)
-		ofile[i], _ = os.Create(oname)
+		oname[i] = oname_prefix + "-" + strconv.Itoa(i)
+		ofile[i], _ = os.Create(oname[i])
 	}
 
 	enc := make([]*json.Encoder, nReduce)
@@ -105,6 +107,8 @@ func DoMapTask(task string, taskid int, nReduce int, mapf func(string, string) [
 			panic("Error while write to intermidate file!")
 		}
 	}
+
+	return oname
 }
 
 func DoReduceTask(taskid int, intermidateLocation []string, reducef func(string, []string) string) {
@@ -130,13 +134,11 @@ func DoReduceTask(taskid int, intermidateLocation []string, reducef func(string,
 
 	sort.Sort(ByKey(intermediate))
 
-
 	oname := "mr-out-" + strconv.Itoa(taskid)
 	ofile, _ := os.Create(oname)
 
 	//
 	// call Reduce on each distinct key in intermediate[],
-	// and print the result to mr-out-0.
 	//
 	i := 0
 	for i < len(intermediate) {
@@ -159,39 +161,22 @@ func DoReduceTask(taskid int, intermidateLocation []string, reducef func(string,
 	ofile.Close()
 }
 
+func DoneMapTask(taskid int, intermidate []string) {
+	args := Args{MAP, taskid, intermidate}
+
+	reply := Reply{}
+
+	ok := call("Coordinator.DoneMapTask", &args, &reply)
+	
+	for !ok {
+		ok = call("Coordinator.DoneMapTask", &args, &reply) 
+	}
+}
+
 func CallForTask(reply *Reply) bool {
 	args := Args{}
 
 	return call("Coordinator.AssignTask", &args, &reply)
-}
-
-//
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
-
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
-	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
-	} else {
-		fmt.Printf("call failed!\n")
-	}
 }
 
 //

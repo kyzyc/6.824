@@ -27,17 +27,19 @@ type ExampleReply struct {
 // Add your RPC definitions here.
 type Args struct {
 	// some message that will send to coordinator
+	Taskid int
+	TaskType int
+	Intermidate []string
 }
 
 type Reply struct {
 	// Task Type
 	TaskType int
+	Taskid  int						// id of task, for distinguish worker
 	// Meta information for map task
 	Task string						// task file name
-	Taskid  int						// id of task, for distinguish worker
 	NReduce int						// number of reduce
 	// Meta information for reduce task
-	ReduceID int					// id of reduce task
 	ReduceTaskLocation []string 	// location of intermidate files
 }
 
