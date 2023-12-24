@@ -45,8 +45,8 @@ func ihash(key string) int {
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	reply := Reply{}
 	for {
+		reply := Reply{}
 		ok := CallForTask(&reply)
 		if (!ok) {
 			break
@@ -58,6 +58,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			break
 		case REDUCE:
 			DoReduceTask(reply.Taskid, reply.ReduceTaskLocation, reducef)
+			DoneReduceTask(reply.Taskid)
 			break
 		case NOTASKYET:
 			time.Sleep(time.Second)
@@ -162,7 +163,7 @@ func DoReduceTask(taskid int, intermidateLocation []string, reducef func(string,
 }
 
 func DoneMapTask(taskid int, intermidate []string) {
-	args := Args{MAP, taskid, intermidate}
+	args := MapArgs{taskid, intermidate}
 
 	reply := Reply{}
 
@@ -170,6 +171,18 @@ func DoneMapTask(taskid int, intermidate []string) {
 	
 	for !ok {
 		ok = call("Coordinator.DoneMapTask", &args, &reply) 
+	}
+}
+
+func DoneReduceTask(taskid int) {
+	args := ReduceArgs{taskid}
+
+	reply := Reply{}
+
+	ok := call("Coordinator.DoneReduceTask", &args, &reply)
+	
+	for !ok {
+		ok = call("Coordinator.DoneReduceTask", &args, &reply) 
 	}
 }
 

@@ -24,12 +24,20 @@ type ExampleReply struct {
 	Y int
 }
 
-// Add your RPC definitions here.
 type Args struct {
+	
+}
+
+// Add your RPC definitions here.
+type MapArgs struct {
 	// some message that will send to coordinator
 	Taskid int
-	TaskType int
 	Intermidate []string
+}
+
+type ReduceArgs struct {
+	// some message that will send to coordinator
+	Taskid int
 }
 
 type Reply struct {

@@ -54,15 +54,15 @@ func (c *Coordinator) FindMapTaskToDo() int {
 	return -1
 }
 
-// func (c *Coordinator) FindReduceTaskToDo() int {
-// 	taskNum := len(c.files)
-// 	for i := 0; i < taskNum; i++ {
-// 		if c.mapTaskMeta.taskStatus[i] == IDLE {
-// 			return i
-// 		} 
-// 	}
-// 	return -1
-// }
+func (c *Coordinator) FindReduceTaskToDo() int {
+	taskNum := c.nReduce
+	for i := 0; i < taskNum; i++ {
+		if c.reduceTaskMeta.taskStatus[i] == IDLE {
+			return i
+		} 
+	}
+	return -1
+}
 
 // Your code here -- RPC handlers for the worker to call.
 // ask for task to do
@@ -81,25 +81,39 @@ func (c *Coordinator) AssignTask(args *Args, reply *Reply) error {
 			c.mapTaskMeta.taskStatus[taskIndex] = IN_PROCESS
 		}
 	} else {
-		// should assign reduce task
-		// reply.TaskType = REDUCE
-		// reply.Taskid = 0
-		// reply.ReduceTaskLocation = []string {
-		// 	"mr-0-0",
-		// }
-		// c.reduceDone = true
+		taskIndex := c.FindReduceTaskToDo()
+		if taskIndex == -1 {
+			// map task all have done
+			reply.TaskType = NOTASKYET
+			c.reduceDone = true
+		} else {
+			reply.TaskType = REDUCE
+			reply.Taskid = taskIndex
+			reply.ReduceTaskLocation = c.reduceTaskMeta.intermidateLocation[taskIndex]
+			c.reduceTaskMeta.taskStatus[taskIndex] = IN_PROCESS
+		}
 	}
 	return nil
 }
 
 // tell the cordinator that have finished the task
-func (c *Coordinator) DoneMapTask(args *Args, reply *Reply) error {
+func (c *Coordinator) DoneMapTask(args *MapArgs, reply *Reply) error {
 	c.mapTaskMeta.taskStatus[args.Taskid] = DONE
+	intermidate := args.Intermidate
+
+	for i := 0; i < c.nReduce; i++ {
+		c.reduceTaskMeta.intermidateLocation[i] = 
+			append(c.reduceTaskMeta.intermidateLocation[i], intermidate[i])
+	}
+
+	// fmt.Println(c.reduceTaskMeta.intermidateLocation)
+
 	return nil
 }
 
 // tell the cordinator that have finished the task
-func (c *Coordinator) DoneReduceTask(args *Args, reply *Reply) error {
+func (c *Coordinator) DoneReduceTask(args *ReduceArgs, reply *Reply) error {
+	c.reduceTaskMeta.taskStatus[args.Taskid] = DONE
 	return nil
 }
 
