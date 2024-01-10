@@ -28,6 +28,11 @@ import (
 	"6.5840/labrpc"
 )
 
+type logEntry struct {
+	Command interface{}
+	term	int
+}
+
 
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -61,7 +66,11 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-
+	// persistent state
+	logs 		[]logEntry		  // log entries
+	currentTerm int			  	  // latest term server has seen
+	votedFor	int
+	// volatile state
 }
 
 // return currentTerm and whether this server
@@ -128,12 +137,19 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	Term			int	// candidate’s term
+	candidateId 	int	// candidate requesting vote
+	// for 2B
+	// lastLogIndex	uint32	// index of candidate’s last log entry
+	// lastLogTerm		uint32	// term of candidate’s last log entry
 }
 
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (2A).
+	term			int
+	voteGranted		bool
 }
 
 // example RequestVote RPC handler.
