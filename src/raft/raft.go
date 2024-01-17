@@ -81,7 +81,7 @@ type Raft struct {
 	votedFor	int				  // candidateId that received vote in current term (or null if none)
 	// some metadata
 	identity	Identity	
-	has_connection	bool		  // whether received message from leader or candidates
+	last_connection	time.Time		  // whether received message from leader or candidates
 	// leaderid		int
 	// volatile state
 	election_timeout int64
@@ -190,18 +190,23 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	// a peer is asking for vote
 	rf.mu.Lock()
-	rf.has_connection = true
+	rf.last_connection = time.Now()
 	rf.mu.Unlock()
 	reply.Term = rf.currentTerm
 	rf.mu.Lock()
-	if args.Term >= rf.currentTerm {
+	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 		rf.identity = FOLLOWER
-		if args.CandidateId == rf.votedFor || rf.votedFor == -1 {
+		// if args.CandidateId == rf.votedFor || rf.votedFor == -1 {
+		rf.votedFor = args.CandidateId
+		reply.VoteGranted = true
+		// }
+	} else if args.Term == rf.currentTerm {
+		if args.CandidateId == rf.votedFor {
 			rf.votedFor = args.CandidateId
 			reply.VoteGranted = true
 		}
-	} else if args.Term < rf.currentTerm {
+	} else {
 		reply.VoteGranted = false
 	}
 	rf.mu.Unlock()
@@ -212,11 +217,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	if len(args.Entries) == 0 {
 		rf.mu.Lock()
-		rf.has_connection = true
+		rf.last_connection = time.Now()
 		reply.Term = rf.currentTerm
 		if args.Term < rf.currentTerm {
 			reply.Success = false
 		} else {
+			rf.identity = FOLLOWER
 			reply.Success = true
 		}
 		rf.mu.Unlock()
@@ -319,26 +325,29 @@ func (rf *Raft) becomeCandidate() {
 	rf.mu.Lock()
 	rf.identity = CANDIDATE
 	rf.currentTerm++
-	rf.election_timeout = 350 + (rand.Int63() % 150)
+	rf.election_timeout = randTimeout(250, 300)
 	rf.mu.Unlock()
 }
 
-func increReceivedVotes (received_votes *int, mu *sync.Mutex) {
+func increReceivedVotes(received_votes *int, mu *sync.Mutex) {
 	mu.Lock()
 	(*received_votes)++
 	mu.Unlock()
 }
 
+func (rf *Raft) checkNoConnection() bool {
+	return time.Since(rf.last_connection).Milliseconds() > rf.election_timeout 
+}
+
 func (rf *Raft) ticker() {
 	for !rf.killed() {
 		// Your code here (2A)
-		// election timeout range: 350~500ms
+		// election timeout range: 250~550ms
 		rf.mu.Lock()
 		if rf.identity == FOLLOWER {
 			rf.mu.Unlock()
 			time.Sleep(time.Duration(rf.election_timeout) * time.Millisecond)
 		} else if rf.identity == LEADER {
-			// FIXME
 			rf.mu.Unlock()
 			for i := 0; i < len(rf.peers); i++ {
 				args, reply := makeHeartBeat(rf.currentTerm, rf.me, []logEntry{})
@@ -348,6 +357,7 @@ func (rf *Raft) ticker() {
 						rf.mu.Lock()
 						if reply.Term > rf.currentTerm {
 							rf.identity = FOLLOWER
+							rf.currentTerm = reply.Term
 						}
 						rf.mu.Unlock()
 					} (i, args, reply)
@@ -357,18 +367,22 @@ func (rf *Raft) ticker() {
 		
 		// Check if a leader election should be started.
 		rf.mu.Lock()
-		if rf.identity == FOLLOWER && !rf.has_connection {
+		if rf.identity == FOLLOWER && rf.checkNoConnection() {
 			rf.mu.Unlock()
 			// restarts its randomized election timeout at the start of an election
-			
+			// rf.election_timeout = 350 + (rand.Int63() % 150)
 			// convert to candidate
 			rf.becomeCandidate()
 			// send requestVote to all peers except itself
 			received_votes_mu := &sync.Mutex{}
+			
 			received_votes := 1		// it will vote for itself
+			rf.mu.Lock()
+			rf.votedFor = rf.me
+			rf.mu.Unlock()
+
 			start_time := time.Now()
 			for i := 0; i < len(rf.peers); i++ {
-				received_votes = 1
 				args, reply := makeRequestVote(rf.currentTerm, rf.me)
 				if (i != rf.me) {
 					go func(server int, args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -381,21 +395,34 @@ func (rf *Raft) ticker() {
 			}
 			for time.Since(start_time).Milliseconds() < rf.election_timeout {
 				received_votes_mu.Lock()
-				if received_votes > int(math.Ceil((float64(len(rf.peers)) / 2))) {
+				// DPrintf("number: %v", int(math.Ceil((float64(len(rf.peers)) / 2))))
+				if received_votes >= int(math.Ceil((float64(len(rf.peers)) / 2))) {
 					received_votes_mu.Unlock()
+					rf.mu.Lock()
 					rf.identity = LEADER
+					rf.mu.Unlock()
 					break
+				} else { 
+					received_votes_mu.Unlock()
 				}
-				received_votes_mu.Unlock()
 			}
+			// DPrintf("restart election")
 		} else {
 			rf.mu.Unlock()
 		}
 
-		// reset has_connection info
 		rf.mu.Lock()
-		rf.has_connection = false
-		rf.mu.Unlock()
+		if rf.identity == CANDIDATE {
+			rf.mu.Unlock()
+			time.Sleep(time.Duration(rf.election_timeout) * time.Millisecond)
+			rf.mu.Lock()
+			rf.identity = FOLLOWER
+			rf.mu.Unlock()
+		} else {
+			rf.mu.Unlock()
+		}
+		
+		// DPrintf("%v %v", rf.identity, rf.has_connection)
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
@@ -433,13 +460,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0
-	rf.has_connection = false
+	rf.last_connection = time.Time{}
 
 	// when server start up, begin as followers (page 5, 5.2)
 	rf.identity = FOLLOWER
 
 	// initial election_timeout
-	rf.election_timeout = 350 + (rand.Int63() % 150)
+	rf.election_timeout = randTimeout(250, 300)
 
 	// voted for nobody
 	rf.votedFor = -1

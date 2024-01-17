@@ -68,6 +68,7 @@ func TestReElection2A(t *testing.T) {
 	// should switch to follower.
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
+	
 
 	// if there's no quorum, no new leader should
 	// be elected.
