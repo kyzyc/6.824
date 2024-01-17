@@ -31,7 +31,7 @@ import (
 
 type logEntry struct {
 	Command interface{}
-	term	int
+	Term	int
 }
 
 
@@ -173,10 +173,16 @@ type RequestVoteReply struct {
 	VoteGranted		bool
 }
 
-type AppendEntries struct {
-	// term			int
-	// leaderId		int
+type AppendEntriesArgs struct {
+	Term			int
+	LeaderId		int
+	Entries			[]logEntry
 	// for future
+}
+
+type AppendEntriesReply struct {
+	Term			int
+	Success			bool
 }
 
 // example RequestVote RPC handler.
@@ -203,8 +209,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 // AppendEntries RPC handler.
 // TODO
-func (rf *Raft) AppendEntries(args *RequestVoteArgs, reply *RequestVoteReply) {
-	
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	if len(args.Entries) == 0 {
+		rf.mu.Lock()
+		rf.has_connection = true
+		reply.Term = rf.currentTerm
+		if args.Term < rf.currentTerm {
+			reply.Success = false
+		} else {
+			reply.Success = true
+		}
+		rf.mu.Unlock()
+	}
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -239,10 +255,10 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-// TODO
-func (rf *Raft) sendHeartBeat(server int, args *AppendEntries) bool {
+func (rf *Raft) sendHeartBeat(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	// ok := rf.peers[]
-	return true
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
 }
 
 
@@ -264,7 +280,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
 
 	return index, term, isLeader
 }
@@ -294,6 +309,12 @@ func makeRequestVote(term int, candidateId int) (*RequestVoteArgs, *RequestVoteR
 	return args, reply
 }
 
+func makeHeartBeat(term int, leaderid int, entries []logEntry) (*AppendEntriesArgs, *AppendEntriesReply) {
+	args := &AppendEntriesArgs{term, leaderid, entries}
+	reply := &AppendEntriesReply{}
+	return args, reply
+}
+
 func (rf *Raft) becomeCandidate() {
 	rf.mu.Lock()
 	rf.identity = CANDIDATE
@@ -312,8 +333,27 @@ func (rf *Raft) ticker() {
 	for !rf.killed() {
 		// Your code here (2A)
 		// election timeout range: 350~500ms
-		// FIXME
-		time.Sleep(time.Duration(rf.election_timeout) * time.Millisecond)
+		rf.mu.Lock()
+		if rf.identity == FOLLOWER {
+			rf.mu.Unlock()
+			time.Sleep(time.Duration(rf.election_timeout) * time.Millisecond)
+		} else if rf.identity == LEADER {
+			// FIXME
+			rf.mu.Unlock()
+			for i := 0; i < len(rf.peers); i++ {
+				args, reply := makeHeartBeat(rf.currentTerm, rf.me, []logEntry{})
+				if (i != rf.me) {
+					go func(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
+						rf.sendHeartBeat(server, args, reply)
+						rf.mu.Lock()
+						if reply.Term > rf.currentTerm {
+							rf.identity = FOLLOWER
+						}
+						rf.mu.Unlock()
+					} (i, args, reply)
+				}
+			}
+		}
 		
 		// Check if a leader election should be started.
 		rf.mu.Lock()
@@ -351,7 +391,6 @@ func (rf *Raft) ticker() {
 		} else {
 			rf.mu.Unlock()
 		}
-
 
 		// reset has_connection info
 		rf.mu.Lock()
@@ -393,6 +432,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+	rf.currentTerm = 0
+	rf.has_connection = false
 
 	// when server start up, begin as followers (page 5, 5.2)
 	rf.identity = FOLLOWER
