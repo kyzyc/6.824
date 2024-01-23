@@ -191,8 +191,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// a peer is asking for vote
 	rf.mu.Lock()
 	rf.last_connection = time.Now()
-	rf.mu.Unlock()
 	reply.Term = rf.currentTerm
+	rf.mu.Unlock()
 	rf.mu.Lock()
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
@@ -350,7 +350,9 @@ func (rf *Raft) ticker() {
 		} else if rf.identity == LEADER {
 			rf.mu.Unlock()
 			for i := 0; i < len(rf.peers); i++ {
+				rf.mu.Lock()
 				args, reply := makeHeartBeat(rf.currentTerm, rf.me, []logEntry{})
+				rf.mu.Unlock()
 				if (i != rf.me) {
 					go func(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
 						rf.sendHeartBeat(server, args, reply)
@@ -383,7 +385,9 @@ func (rf *Raft) ticker() {
 
 			start_time := time.Now()
 			for i := 0; i < len(rf.peers); i++ {
+				rf.mu.Lock()
 				args, reply := makeRequestVote(rf.currentTerm, rf.me)
+				rf.mu.Unlock()
 				if (i != rf.me) {
 					go func(server int, args *RequestVoteArgs, reply *RequestVoteReply) {
 						rf.sendRequestVote(server, args, reply)
