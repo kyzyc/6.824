@@ -191,8 +191,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	reply.Term = rf.currentTerm
 
-	DPrintf("%v received requestvote from %v, myterm: %v candidate term: %v", rf.me, args.CandidateId, rf.currentTerm, args.Term)
-
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
 		return
@@ -202,7 +200,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
 		rf.last_connection = time.Now()
-		DPrintf("%v reply to %v: %v %v", rf.me, args.CandidateId, rf.votedFor, reply.VoteGranted)
 		return
 	} 
 
@@ -214,8 +211,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.VoteGranted = false
 	}
-
-	DPrintf("%v reply to %v: %v %v", rf.me, args.CandidateId, rf.votedFor, reply.VoteGranted)
 }
 
 // AppendEntries RPC handler.
@@ -340,7 +335,6 @@ func (rf *Raft) timeoutTicker(c chan<- bool) {
 	for !rf.killed() {
 		// every 20 millisecond, start ticker
 		time.Sleep(time.Duration(rf.election_timeout) * time.Millisecond)
-		DPrintf("tick")
 		if rf.checkNoConnection() {
 			c <- true
 			return
@@ -369,9 +363,6 @@ func (rf *Raft) startElection() {
 	finished := 1
 
 	var mu sync.Mutex
-	//cond := sync.NewCond(&mu)
-
-	DPrintf("start send vote to peers")
 
 	success := make(chan bool)
 
@@ -390,18 +381,15 @@ func (rf *Raft) startElection() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 			if termTmp != rf.currentTerm {
-				DPrintf("args.Term != rf.currentTerm")
 				return
 			}
 			if reply.Term > rf.currentTerm {
-				DPrintf("convert to follower!")
 				rf.identity = FOLLOWER
 				rf.currentTerm = reply.Term
 				rf.last_connection = time.Now()
 				return
 			}
 			if reply.VoteGranted {
-				DPrintf("get a vote!")
 				received_votes++
 			}
 			if received_votes >= int(math.Ceil((float64(len(rf.peers)) / 2))) {
@@ -413,17 +401,14 @@ func (rf *Raft) startElection() {
 			} else if finished == len(rf.peers) {
 				return
 			}
-			//cond.Broadcast()
 		} (server, args, reply)
 	}
 
-	for {
-		select {
-		case <- success:
-			return
-		case <- time.After(time.Duration(rf.election_timeout) * time.Millisecond):
-			return
-		}
+	select {
+	case <- success:
+		return
+	case <- time.After(time.Duration(rf.election_timeout) * time.Millisecond):
+		return
 	}
 }
 
@@ -485,12 +470,6 @@ func randTimeout(lower_time int, higher_time int) int64 {
 	return int64(lower_time) + (rand.Int63() % int64(higher_time))
 }
 
-
-// func randTimeoutAndSleep(lower_time int, higher_time int) {
-// 	ms := randTimeout(lower_time, higher_time)
-// 	time.Sleep(time.Duration(ms) * time.Millisecond)
-// }
-
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
 // server's port is peers[me]. all the servers' peers[] arrays
@@ -523,9 +502,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
-	// DPrintf("len of peers: %v", len(peers))
-	// DPrintf("round: %v", int(math.Ceil((float64(len(rf.peers)) / 2))))
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
